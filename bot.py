@@ -1,3 +1,5 @@
+from flask import Flask
+from threading import Thread
 import logging
 import json
 import random
@@ -9,6 +11,25 @@ from database import session, User, UserCard, Giveaway, BotChat
 from cards import get_random_card, get_card_by_id, get_card_by_name_and_rarity, CARDS
 from card_images import generate_card_image
 from utils import format_time, get_rarity_emoji, get_rarity_name, parse_participants, set_participants
+
+# ==================== FLASK ДЛЯ RENDER ====================
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "🍾 Бот Чекушка Collector работает!"
+
+@app_flask.route('/health')
+def health():
+    return "OK"
+
+def run_flask():
+    app_flask.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
+# =========================================================
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -35,7 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🍾 Привет, {user.first_name}!\n\n"
         "📖 Команды:\n"
-        "/hunt — найти чекушку (30 мин задержка)\n"
+        "/hunt — найти чекушку (30 мин)\n"
         "/profile — твоя коллекция\n"
         "/index — все карточки по редкостям\n"
         "/top — таблица лидеров\n"
@@ -51,14 +72,11 @@ async def hunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Сначала /start")
         return
     
-    # ===== ПРОВЕРКА ЗАДЕРЖКИ (30 МИНУТ) =====
     if db_user.last_hunt_time:
         time_diff = (datetime.now() - db_user.last_hunt_time).total_seconds()
         if time_diff < config.HUNT_COOLDOWN:
             wait_time = int(config.HUNT_COOLDOWN - time_diff)
-            await update.message.reply_text(
-                f"⏳ Подожди {format_time(wait_time)} перед новой охотой!"
-            )
+            await update.message.reply_text(f"⏳ Подожди {format_time(wait_time)} перед новой охотой!")
             return
     
     card_data = get_random_card()
@@ -72,10 +90,9 @@ async def hunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db_user.total_hunts += 1
     db_user.coins += 5
-    db_user.last_hunt_time = datetime.now()  # Запоминаем время последней охоты
+    db_user.last_hunt_time = datetime.now()
     session.commit()
     
-    # Генерируем фото
     try:
         img_bytes = generate_card_image(card_data['name'], card_data['rarity'], card_data['effect'], card_data['description'], card_data['id'])
     except:
@@ -84,17 +101,10 @@ async def hunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rarity_emoji = get_rarity_emoji(card_data['rarity'])
     rarity_name = get_rarity_name(card_data['rarity'])
     
-    message = f"🍾 **Ты нашел чекушку!**\n\n"
-    message += f"**{card_data['name']}**\n"
-    message += f"{rarity_emoji} Редкость: {rarity_name}\n"
-    message += f"📝 {card_data['description']}\n"
-    
+    message = f"🍾 **Ты нашел чекушку!**\n\n**{card_data['name']}**\n{rarity_emoji} {rarity_name}\n📝 {card_data['description']}\n"
     if card_data['effect']:
-        message += f"✨ Эффект: {card_data['effect']}\n"
-    
-    message += f"\n💰 +5 монет\n"
-    message += f"📦 Всего карточек: {db_user.total_hunts}\n"
-    message += f"⏳ Следующая охота через 30 минут"
+        message += f"✨ {card_data['effect']}\n"
+    message += f"\n💰 +5 монет\n📦 Всего: {db_user.total_hunts}\n⏳ Следующая охота через 30 мин"
     
     if img_bytes:
         await update.message.reply_photo(photo=img_bytes, caption=message, parse_mode='Markdown')
@@ -213,14 +223,10 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     args = context.args
     if len(args) < 1:
-        await update.message.reply_text(
-            "❌ Использование: /adduser @username\n"
-            "Пример: /adduser @Artem30113"
-        )
+        await update.message.reply_text("❌ Использование: /adduser @username")
         return
     
     target_username = args[0].replace('@', '')
-    
     existing = session.query(User).filter_by(username=target_username).first()
     if existing:
         await update.message.reply_text(f"✅ Пользователь @{target_username} уже есть в базе!")
@@ -228,7 +234,6 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         chat = await context.bot.get_chat(f"@{target_username}")
-        
         new_user = User(
             telegram_id=chat.id,
             username=chat.username,
@@ -236,18 +241,9 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         session.add(new_user)
         session.commit()
-        
-        await update.message.reply_text(
-            f"✅ Пользователь @{target_username} добавлен в базу!\n"
-            f"ID: {chat.id}\n"
-            f"Имя: {chat.first_name or 'Без имени'}"
-        )
+        await update.message.reply_text(f"✅ Пользователь @{target_username} добавлен в базу!")
     except Exception as e:
-        await update.message.reply_text(
-            f"❌ Не удалось найти пользователя @{target_username}!\n"
-            f"Ошибка: {e}\n\n"
-            f"Попробуй добавить по ID: /adduserid ID Имя"
-        )
+        await update.message.reply_text(f"❌ Не удалось найти пользователя!\nПопробуй /adduserid")
 
 async def adduserid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -258,11 +254,7 @@ async def adduserid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text(
-            "❌ Использование: /adduserid ID Имя\n"
-            "Пример: /adduserid 123456789 Артем\n\n"
-            "ID можно получить у бота @getmyid_bot"
-        )
+        await update.message.reply_text("❌ Использование: /adduserid ID Имя")
         return
     
     try:
@@ -274,7 +266,7 @@ async def adduserid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     existing = session.query(User).filter_by(telegram_id=target_id).first()
     if existing:
-        await update.message.reply_text(f"✅ Пользователь {first_name} (ID: {target_id}) уже есть в базе!")
+        await update.message.reply_text(f"✅ Пользователь {first_name} уже есть в базе!")
         return
     
     new_user = User(
@@ -285,11 +277,7 @@ async def adduserid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session.add(new_user)
     session.commit()
     
-    await update.message.reply_text(
-        f"✅ Пользователь добавлен в базу!\n"
-        f"ID: {target_id}\n"
-        f"Имя: {first_name}"
-    )
+    await update.message.reply_text(f"✅ Пользователь добавлен!\nID: {target_id}\nИмя: {first_name}")
 
 async def givecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -301,10 +289,8 @@ async def givecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) < 3:
         await update.message.reply_text(
-            "❌ Использование: /givecard @username Название_карты Редкость\n\n"
-            "Пример: /givecard @Dafuq_Blaze Чекушка_Белуга common\n"
-            "Редкости: common, uncommon, rare, epic, legendary, mythic, secret\n\n"
-            "Название пиши без пробелов, через _ (Чекушка_Белуга)"
+            "❌ /givecard @username Название Редкость\n"
+            "Пример: /givecard @Dafuq_Blaze Чекушка_Белуга common"
         )
         return
     
@@ -313,46 +299,25 @@ async def givecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rarity = args[2].lower()
     
     if rarity not in CARDS:
-        await update.message.reply_text(
-            f"❌ Редкость '{rarity}' не найдена!\n"
-            "Доступные: common, uncommon, rare, epic, legendary, mythic, secret"
-        )
+        await update.message.reply_text(f"❌ Редкость '{rarity}' не найдена!")
         return
     
     target_user = session.query(User).filter_by(username=target_username).first()
     if not target_user:
-        await update.message.reply_text(
-            f"❌ Пользователь @{target_username} не найден в базе!\n\n"
-            f"Сначала добавь его:\n"
-            f"/adduser @{target_username} — если есть username\n"
-            f"/adduserid ID Имя — если нет username"
-        )
+        await update.message.reply_text(f"❌ Пользователь @{target_username} не найден в базе!")
         return
     
     card_data = get_card_by_name_and_rarity(card_name, rarity)
     if not card_data:
-        await update.message.reply_text(
-            f"❌ Карточка '{card_name}' с редкостью '{rarity}' не найдена!\n"
-            f"Проверь название и редкость.\n"
-            f"Доступные карты: /cards"
-        )
+        await update.message.reply_text(f"❌ Карточка '{card_name}' не найдена!")
         return
     
-    user_card = session.query(UserCard).filter_by(
-        user_id=target_user.id,
-        card_id=card_data['id']
-    ).first()
-    
+    user_card = session.query(UserCard).filter_by(user_id=target_user.id, card_id=card_data['id']).first()
     if user_card:
         user_card.count += 1
     else:
-        user_card = UserCard(
-            user_id=target_user.id,
-            card_id=card_data['id'],
-            count=1
-        )
+        user_card = UserCard(user_id=target_user.id, card_id=card_data['id'], count=1)
         session.add(user_card)
-    
     session.commit()
     
     rarity_emoji = get_rarity_emoji(rarity)
@@ -362,23 +327,16 @@ async def givecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ **Карточка выдана!**\n\n"
         f"Пользователь: @{target_username}\n"
         f"Карта: {rarity_emoji} **{card_data['name']}**\n"
-        f"Редкость: {rarity_name}\n"
-        f"ID: #{card_data['id']}"
+        f"Редкость: {rarity_name}"
     )
     
     try:
         await context.bot.send_message(
             chat_id=target_user.telegram_id,
-            text=(
-                f"🎁 **Тебе выдали карту!**\n\n"
-                f"Ты получил: {rarity_emoji} **{card_data['name']}**\n"
-                f"Редкость: {rarity_name}\n\n"
-                f"Проверь свою коллекцию через /profile"
-            ),
-            parse_mode='Markdown'
+            text=f"🎁 Тебе выдали карту!\nТы получил: {rarity_emoji} {card_data['name']}"
         )
-    except Exception as e:
-        logging.error(f"Ошибка отправки уведомления: {e}")
+    except:
+        pass
 
 async def givecardid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -390,11 +348,8 @@ async def givecardid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) < 3:
         await update.message.reply_text(
-            "❌ Использование: /givecardid ID Название_карты Редкость\n\n"
-            "Пример: /givecardid 123456789 Чекушка_Белуга common\n"
-            "Редкости: common, uncommon, rare, epic, legendary, mythic, secret\n\n"
-            "Название пиши без пробелов, через _ (Чекушка_Белуга)\n"
-            "ID можно получить у бота @getmyid_bot"
+            "❌ /givecardid ID Название Редкость\n"
+            "Пример: /givecardid 123456789 Чекушка_Белуга common"
         )
         return
     
@@ -408,72 +363,44 @@ async def givecardid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rarity = args[2].lower()
     
     if rarity not in CARDS:
-        await update.message.reply_text(
-            f"❌ Редкость '{rarity}' не найдена!\n"
-            "Доступные: common, uncommon, rare, epic, legendary, mythic, secret"
-        )
+        await update.message.reply_text(f"❌ Редкость '{rarity}' не найдена!")
         return
     
     target_user = session.query(User).filter_by(telegram_id=target_id).first()
     if not target_user:
-        await update.message.reply_text(
-            f"❌ Пользователь с ID {target_id} не найден в базе!\n\n"
-            f"Сначала добавь его: /adduserid {target_id} Имя"
-        )
+        await update.message.reply_text(f"❌ Пользователь с ID {target_id} не найден в базе!")
         return
     
     card_data = get_card_by_name_and_rarity(card_name, rarity)
     if not card_data:
-        await update.message.reply_text(
-            f"❌ Карточка '{card_name}' с редкостью '{rarity}' не найдена!\n"
-            f"Проверь название и редкость.\n"
-            f"Доступные карты: /cards"
-        )
+        await update.message.reply_text(f"❌ Карточка '{card_name}' не найдена!")
         return
     
-    user_card = session.query(UserCard).filter_by(
-        user_id=target_user.id,
-        card_id=card_data['id']
-    ).first()
-    
+    user_card = session.query(UserCard).filter_by(user_id=target_user.id, card_id=card_data['id']).first()
     if user_card:
         user_card.count += 1
     else:
-        user_card = UserCard(
-            user_id=target_user.id,
-            card_id=card_data['id'],
-            count=1
-        )
+        user_card = UserCard(user_id=target_user.id, card_id=card_data['id'], count=1)
         session.add(user_card)
-    
     session.commit()
     
     rarity_emoji = get_rarity_emoji(rarity)
     rarity_name = get_rarity_name(rarity)
     
     await update.message.reply_text(
-        f"✅ **Карточка выдана по ID!**\n\n"
-        f"Пользователь: {target_user.first_name or 'Без имени'} (ID: {target_id})\n"
+        f"✅ **Карточка выдана!**\n\n"
+        f"Пользователь: {target_user.first_name} (ID: {target_id})\n"
         f"Карта: {rarity_emoji} **{card_data['name']}**\n"
-        f"Редкость: {rarity_name}\n"
-        f"ID: #{card_data['id']}"
+        f"Редкость: {rarity_name}"
     )
     
     try:
         await context.bot.send_message(
             chat_id=target_user.telegram_id,
-            text=(
-                f"🎁 **Тебе выдали карту!**\n\n"
-                f"Ты получил: {rarity_emoji} **{card_data['name']}**\n"
-                f"Редкость: {rarity_name}\n\n"
-                f"Проверь свою коллекцию через /profile"
-            ),
-            parse_mode='Markdown'
+            text=f"🎁 Тебе выдали карту!\nТы получил: {rarity_emoji} {card_data['name']}"
         )
-    except Exception as e:
-        logging.error(f"Ошибка отправки уведомления: {e}")
-
-# ==================== /say ====================
+    except:
+        pass
 
 async def say(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.username):
@@ -482,7 +409,7 @@ async def say(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     args = context.args
     if not args:
-        await update.message.reply_text("❌ /say Текст\nПример: /say Привет")
+        await update.message.reply_text("❌ /say Текст")
         return
     
     text = ' '.join(args).replace('_', ' ')
@@ -494,20 +421,11 @@ async def say(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     for chat in chats:
-        keyboard.append([InlineKeyboardButton(
-            f"📢 {chat.chat_title}", 
-            callback_data=f"say_to_{chat.chat_id}"
-        )])
+        keyboard.append([InlineKeyboardButton(f"📢 {chat.chat_title}", callback_data=f"say_to_{chat.chat_id}")])
     
     context.user_data['say_text'] = text
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    await update.message.reply_text(
-        f"📝 **Выбери чат для отправки:**\n\n{text}", 
-        parse_mode='Markdown', 
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# ==================== /giveaway ====================
+    await update.message.reply_text(f"📝 **Выбери чат:**\n\n{text}", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.username):
@@ -516,11 +434,7 @@ async def giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text(
-            "❌ /giveaway Название Редкость\n"
-            "Пример: /giveaway Чекушка_Белуга common\n\n"
-            "После выбора чата создастся розыгрыш."
-        )
+        await update.message.reply_text("❌ /giveaway Название Редкость\nПример: /giveaway Чекушка_Белуга common")
         return
     
     card_name = args[0].replace('_', ' ')
@@ -546,17 +460,14 @@ async def giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     for chat in chats:
-        keyboard.append([InlineKeyboardButton(
-            f"🎯 {chat.chat_title}", 
-            callback_data=f"giveaway_to_{chat.chat_id}"
-        )])
+        keyboard.append([InlineKeyboardButton(f"🎯 {chat.chat_title}", callback_data=f"giveaway_to_{chat.chat_id}")])
     
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     await update.message.reply_text(
         f"🎉 **Розыгрыш создаётся!**\n\n"
         f"Приз: {get_rarity_emoji(rarity)} {card_data['name']}\n"
         f"Редкость: {get_rarity_name(rarity)}\n\n"
-        f"**Выбери чат для розыгрыша:**",
+        f"**Выбери чат:**",
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -577,31 +488,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    # ===== ОТПРАВКА СООБЩЕНИЯ (/say) =====
     if data.startswith("say_to_"):
         chat_id = int(data.replace("say_to_", ""))
         text = context.user_data.get('say_text', '')
-        
         if not text:
             await query.edit_message_text("❌ Нет текста!")
             return
-        
         try:
             await context.bot.send_message(chat_id=chat_id, text=f"📢 {text}")
-            await query.edit_message_text(f"✅ Сообщение отправлено в чат!")
+            await query.edit_message_text("✅ Сообщение отправлено!")
         except Exception as e:
             await query.edit_message_text(f"❌ Ошибка: {e}")
     
-    # ===== СОЗДАНИЕ РОЗЫГРЫША =====
     elif data.startswith("giveaway_to_"):
         chat_id = int(data.replace("giveaway_to_", ""))
-        
         card_name = context.user_data.get('giveaway_card_name')
         rarity = context.user_data.get('giveaway_rarity')
         card_id = context.user_data.get('giveaway_card_id')
         
         if not card_name or not rarity:
-            await query.edit_message_text("❌ Данные розыгрыша потеряны! Начни заново.")
+            await query.edit_message_text("❌ Данные потеряны! Начни заново.")
             return
         
         giveaway = Giveaway(
@@ -619,7 +525,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rarity_emoji = get_rarity_emoji(rarity)
         rarity_name = get_rarity_name(rarity)
         
-        # В ЧАТ УЧАСТНИКАМ — ТОЛЬКО 1 КНОПКА
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -628,7 +533,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Приз: {rarity_emoji} **{card_name}**\n"
                     f"Редкость: {rarity_name}\n"
                     f"ID: #{giveaway.id}\n\n"
-                    f"👇 Нажми кнопку чтобы участвовать!"
+                    f"👇 Нажми кнопку!"
                 ),
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
@@ -636,10 +541,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
             )
         except Exception as e:
-            await query.edit_message_text(f"❌ Ошибка отправки в чат: {e}")
+            await query.edit_message_text(f"❌ Ошибка: {e}")
             return
         
-        # В ЛИЧКУ АДМИНА — УПРАВЛЕНИЕ (3 КНОПКИ)
         admin_user = get_admin_user()
         if admin_user:
             try:
@@ -649,26 +553,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🔔 **УПРАВЛЕНИЕ РОЗЫГРЫШЕМ**\n\n"
                         f"Приз: {rarity_emoji} {card_name}\n"
                         f"Редкость: {rarity_name}\n"
-                        f"ID: #{giveaway.id}\n"
-                        f"Чат: {chat_id}\n\n"
-                        f"👇 Управляй розыгрышем:"
+                        f"ID: #{giveaway.id}\n\n"
+                        f"👇 Управляй:"
                     ),
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("📊 Участники", callback_data=f"list_{giveaway.id}")],
                         [InlineKeyboardButton("🏆 ВЫБРАТЬ ПОБЕДИТЕЛЯ", callback_data=f"finish_{giveaway.id}")],
-                        [InlineKeyboardButton("❌ Отменить розыгрыш", callback_data=f"cancel_giveaway_{giveaway.id}")]
+                        [InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_giveaway_{giveaway.id}")]
                     ])
                 )
-            except Exception as e:
-                logging.error(f"Ошибка отправки админу: {e}")
+            except:
+                pass
         
-        await query.edit_message_text(f"✅ Розыгрыш создан!\n📢 Отправлен в чат\n📨 Бот написал админу в ЛС")
+        await query.edit_message_text("✅ Розыгрыш создан!\n📢 Отправлен в чат\n📨 Управление у админа в ЛС")
     
     elif data == "cancel":
         await query.edit_message_text("❌ Отменено")
     
-    # ===== ИНДЕКС =====
     elif data == "open_index":
         user_cards = session.query(UserCard).filter_by(user_id=db_user.id).all()
         if not user_cards:
@@ -732,7 +634,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("📚 ИНДЕКС", callback_data="open_index")]]
         await query.edit_message_text(message, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     
-    # ===== РОЗЫГРЫШ =====
     elif data.startswith("join_"):
         giveaway_id = int(data.replace("join_", ""))
         giveaway = session.query(Giveaway).filter_by(id=giveaway_id).first()
@@ -742,19 +643,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         participants = parse_participants(giveaway.participants)
         if user.telegram_id in participants:
-            await query.edit_message_text("❌ Ты уже участвуешь в этом розыгрыше!")
+            await query.edit_message_text("❌ Ты уже участвуешь!")
             return
         
         participants.append(user.telegram_id)
         giveaway.participants = set_participants(participants)
         session.commit()
-        
-        await query.edit_message_text(f"✅ Ты успешно участвуешь в розыгрыше #{giveaway_id}!")
+        await query.edit_message_text(f"✅ Ты участвуешь в розыгрыше #{giveaway_id}!")
     
-    # ===== СПИСОК УЧАСТНИКОВ (в ЛС админа) =====
     elif data.startswith("list_"):
         if not is_admin(user.username):
-            await query.edit_message_text("⛔ Только админ может это видеть!")
+            await query.edit_message_text("⛔ Только админ!")
             return
         
         giveaway_id = int(data.replace("list_", ""))
@@ -768,7 +667,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📊 Пока никто не участвует!")
             return
         
-        message = f"📊 **Участники розыгрыша #{giveaway_id}:**\n\n"
+        message = f"📊 **Участники (#{giveaway_id}):**\n\n"
         for i, uid in enumerate(participants, 1):
             try:
                 member = await context.bot.get_chat(uid)
@@ -779,19 +678,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name = str(uid)
             message += f"{i}. {name}\n"
         
-        await query.edit_message_text(
-            message,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Вернуться к управлению", callback_data=f"back_to_control_{giveaway.id}")]
-            ])
-        )
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Назад", callback_data=f"back_to_control_{giveaway.id}")]
+        ]))
     
-    # ===== ВЕРНУТЬСЯ К УПРАВЛЕНИЮ =====
     elif data.startswith("back_to_control_"):
         giveaway_id = int(data.replace("back_to_control_", ""))
         giveaway = session.query(Giveaway).filter_by(id=giveaway_id).first()
-        
         if not giveaway:
             await query.edit_message_text("❌ Розыгрыш не найден!")
             return
@@ -805,19 +698,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Приз: {rarity_emoji} {card_data['name']}\n"
             f"Редкость: {rarity_name}\n"
             f"ID: #{giveaway.id}\n\n"
-            f"👇 Управляй розыгрышем:",
+            f"👇 Управляй:",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📊 Участники", callback_data=f"list_{giveaway.id}")],
                 [InlineKeyboardButton("🏆 ВЫБРАТЬ ПОБЕДИТЕЛЯ", callback_data=f"finish_{giveaway.id}")],
-                [InlineKeyboardButton("❌ Отменить розыгрыш", callback_data=f"cancel_giveaway_{giveaway.id}")]
+                [InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_giveaway_{giveaway.id}")]
             ])
         )
     
-    # ===== ВЫБРАТЬ ПОБЕДИТЕЛЯ (в ЛС админа) =====
     elif data.startswith("finish_"):
         if not is_admin(user.username):
-            await query.edit_message_text("⛔ Только админ может это сделать!")
+            await query.edit_message_text("⛔ Только админ!")
             return
         
         giveaway_id = int(data.replace("finish_", ""))
@@ -859,7 +751,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 winner_name = str(winner_id)
             
-            # ОТПРАВЛЯЕМ РЕЗУЛЬТАТ В ЧАТ
             try:
                 await context.bot.send_message(
                     chat_id=giveaway.chat_id,
@@ -875,33 +766,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
             
-            # БОТ ПИШЕТ АДМИНУ В ЛС
             await query.edit_message_text(
                 f"✅ **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\n"
                 f"Приз: {rarity_emoji} {card_data['name']}\n"
                 f"Редкость: {rarity_name}\n"
                 f"ID: #{giveaway.id}\n"
                 f"Победитель: {winner_name}\n\n"
-                f"Карточка выдана победителю!",
+                f"Карточка выдана!",
                 parse_mode='Markdown'
             )
             
-            # УВЕДОМЛЕНИЕ ПОБЕДИТЕЛЮ
             try:
                 await context.bot.send_message(
                     winner_id,
                     f"🎉 **Ты победил в розыгрыше!**\n\n"
                     f"Ты получил: {rarity_emoji} **{card_data['name']}**\n"
-                    f"Редкость: {rarity_name}\n\n"
-                    f"Проверь свою коллекцию через /profile"
+                    f"Редкость: {rarity_name}"
                 )
             except:
                 pass
     
-    # ===== ОТМЕНА РОЗЫГРЫША =====
     elif data.startswith("cancel_giveaway_"):
         if not is_admin(user.username):
-            await query.edit_message_text("⛔ Только админ может это сделать!")
+            await query.edit_message_text("⛔ Только админ!")
             return
         
         giveaway_id = int(data.replace("cancel_giveaway_", ""))
@@ -912,7 +799,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         giveaway.is_active = False
         session.commit()
-        
         await query.edit_message_text(f"❌ Розыгрыш #{giveaway_id} отменён!")
 
 # ==================== ЗАПУСК ====================
@@ -925,7 +811,6 @@ def main():
     
     app = Application.builder().token(config.BOT_TOKEN).build()
     
-    # Основные команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("hunt", hunt))
     app.add_handler(CommandHandler("profile", profile))
@@ -933,23 +818,18 @@ def main():
     app.add_handler(CommandHandler("top", top))
     app.add_handler(CommandHandler("bonus", bonus))
     app.add_handler(CommandHandler("cards", cards_list))
-    
-    # Админ команды
     app.add_handler(CommandHandler("adduser", adduser))
     app.add_handler(CommandHandler("adduserid", adduserid))
     app.add_handler(CommandHandler("givecard", givecard))
     app.add_handler(CommandHandler("givecardid", givecardid))
     app.add_handler(CommandHandler("say", say))
     app.add_handler(CommandHandler("giveaway", giveaway))
-    
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
     
-    print("✅ База готова!")
-    print("🤖 Бот запущен!")
-    print(f"👑 Админ: @{config.ADMIN_USERNAME}")
-    print(f"📋 Чаты: Mysterious TV, Клан АНТИ-ГАББИ")
+    print("✅ Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
+    keep_alive()
     main()
